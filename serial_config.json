@@ -1,0 +1,8 @@
+{
+  "port_name": "COM4",
+  "baud_rate": 38400,
+  "bytesize": 8,
+  "parity": "N",
+  "stop_bits": 1.0,
+  "flow_control": "none"
+}
