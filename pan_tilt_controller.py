@@ -7,7 +7,40 @@ from PyQt5 import QtCore, QtWidgets
 from typing import Callable, Optional
 
 from serial_comm import SerialComm
-from protocol import ProtocolParser, ParseResult
+from protocol import ProtocolParser, ParseResult, Command
+
+
+# --- Command Definitions ----------------------------------------------------
+CMD_ABS_STOP = bytes([0x81, 0x01, 0x06, 0x02, 0x00, 0x00, 0xFF])
+CMD_ABS_ANGLE_STOP = bytes([0x81, 0x01, 0x06, 0x06, 0x00, 0x00, 0xFF])
+CMD_REL_STOP = bytes([0x81, 0x01, 0x06, 0x03, 0x00, 0x00, 0xFF])
+CMD_GET_SPEED = bytes([0x81, 0xD9, 0x06, 0x03, 0xFF])
+CMD_GET_VERSION = bytes([0x81, 0x09, 0x00, 0x02, 0xFF])
+CMD_GET_MCU_TYPE = bytes([0x81, 0x09, 0x00, 0x03, 0xFF])
+CMD_GET_PAN_TYPE = bytes([0x81, 0xD9, 0x06, 0x02, 0xFF])
+CMD_STOP = bytes([0x81, 0x01, 0x06, 0x01, 0x00, 0x00, 0x03, 0x03, 0xFF])
+CMD_STALL_CALI_ON = bytes([0x81, 0xD1, 0x06, 0x05, 0x02, 0xFF])
+CMD_STALL_CALI_OFF = bytes([0x81, 0xD1, 0x06, 0x05, 0x03, 0xFF])
+CMD_ZERO_CALI_PLUS = bytes([0x81, 0x01, 0x06, 0x05, 0x01, 0x00, 0xFF])
+CMD_ZERO_CALI_MINUS = bytes([0x81, 0x01, 0x06, 0x05, 0x01, 0x02, 0xFF])
+CMD_CLEAR_ZERO_CALI = bytes([0x81, 0x01, 0x06, 0x05, 0x00, 0xFF])
+CMD_ZERO_CALI_STATUS = bytes([0x81, 0xD9, 0x05, 0x55, 0xFF])
+CMD_LOCK_HOME = bytes([0x81, 0x01, 0x06, 0x04, 0x01, 0xFF])
+CMD_UNLOCK_HOME = bytes([0x81, 0x01, 0x06, 0x04, 0x00, 0xFF])
+CMD_LOCK_STATUS = bytes([0x81, 0xD9, 0x05, 0x56, 0xFF])
+CMD_GO_HOME = bytes([0x81, 0x01, 0x06, 0x04, 0xFF])
+CMD_GET_SPEED_BY_ZOOM = bytes([0x81, 0x09, 0x06, 0xA2, 0xFF])
+CMD_SPEED_BY_ZOOM_OFF = bytes([0x81, 0x01, 0x06, 0xA2, 0x03, 0xFF])
+CMD_GET_ACCELERATION = bytes([0x81, 0xD9, 0x06, 0x01, 0xFF])
+CMD_GET_ACC_LEVEL = bytes([0x81, 0x09, 0x06, 0x31, 0xFF])
+CMD_GET_POSITION = bytes([0x81, 0x09, 0x06, 0x12, 0xFF])
+CMD_GET_ANGLE = bytes([0x81, 0xD9, 0x05, 0x51, 0xFF])
+CMD_GET_AB_COUNT = bytes([0x81, 0xD9, 0x05, 0x52, 0xFF])
+CMD_GET_Z_COUNT = bytes([0x81, 0xD9, 0x05, 0x53, 0xFF])
+CMD_MAX_ANGLE_ON = bytes([0x81, 0x01, 0x06, 0x66, 0x02, 0xFF])
+CMD_MAX_ANGLE_OFF = bytes([0x81, 0x01, 0x06, 0x66, 0x03, 0xFF])
+CMD_MOTOR_TYPE_0P9D = bytes([0x81, 0x01, 0x00, 0x03, 0x00, 0xFF])
+CMD_MOTOR_TYPE_1P8D = bytes([0x81, 0x01, 0x00, 0x03, 0x01, 0xFF])
 
 
 class PanTiltController(QtWidgets.QWidget):
@@ -22,7 +55,7 @@ class PanTiltController(QtWidgets.QWidget):
             self.comm.on_rx_char = self._on_rx
         self.parser = ProtocolParser()
         self.buffer = bytearray()
-        self.pending_cmd: Optional[str] = None
+        self.pending_cmd: Optional[Command] = None
         self.on_result: Callable[[ParseResult], None] = lambda res: None
         
         # callback invoked whenever data is transmitted
@@ -58,7 +91,7 @@ class PanTiltController(QtWidgets.QWidget):
                 self.pending_cmd = None
                 self.on_result(result)
 
-    def send(self, data: bytes, pending: Optional[str] = None) -> None:
+    def send(self, data: bytes, pending: Optional[Command] = None) -> None:
         self.pending_cmd = pending
         if self.comm is not None:
             self.comm.send(data)
@@ -66,12 +99,10 @@ class PanTiltController(QtWidgets.QWidget):
 
     # --- high level commands ----------------------------------------------
     def abs_stop(self) -> None:
-        cmd = bytes([0x81, 0x01, 0x06, 0x02, 0x00, 0x00, 0xFF])
-        self.send(cmd)
+        self.send(CMD_ABS_STOP)
 
     def abs_angle_stop(self) -> None:
-        cmd = bytes([0x81, 0x01, 0x06, 0x06, 0x00, 0x00, 0xFF])
-        self.send(cmd)
+        self.send(CMD_ABS_ANGLE_STOP)
 
     def abs_move(self, type: str, position: int, speed: int) -> None:
         """Move to absolute *position* at *speed*."""
@@ -90,6 +121,27 @@ class PanTiltController(QtWidgets.QWidget):
             cmd[12] = (position >> 4) & 0x0F
             cmd[13] = position & 0x0F
         self.send(bytes(cmd))
+
+    def abs_angle_move(self, type: str, angle: int, speed: int) -> None:
+        """Move to absolute *angle* at *speed*."""
+        cmd = bytearray([0x81, 0x01, 0x06, 0x06, 0, 0,
+                         0, 0, 0, 0, 0, 0, 0, 0, 0xFF])
+        if type == "Pan":
+            cmd[4] = speed
+            cmd[6] = (angle >> 12) & 0x0F
+            cmd[7] = (angle >> 8) & 0x0F
+            cmd[8] = (angle >> 4) & 0x0F
+            cmd[9] = angle & 0x0F
+        elif type == "Tilt":
+            cmd[5] = speed
+            cmd[10] = (angle >> 12) & 0x0F
+            cmd[11] = (angle >> 8) & 0x0F
+            cmd[12] = (angle >> 4) & 0x0F
+            cmd[13] = angle & 0x0F
+        self.send(bytes(cmd))
+
+    def rel_stop(self) -> None:
+        self.send(CMD_REL_STOP)
 
     def rel_move(self, direction: str, step: int, speed: int) -> None:
         """Move relatively in *direction* by *step*."""
@@ -112,21 +164,17 @@ class PanTiltController(QtWidgets.QWidget):
         self.send(bytes(cmd))
 
     def get_speed(self) -> None:
-        cmd = bytes([0x81, 0xD9, 0x06, 0x03, 0xFF])
-        self.send(cmd, pending="current_speed")
+        self.send(CMD_GET_SPEED, pending=Command.CURRENT_SPEED)
 
     def get_version(self) -> None:
         """Query firmware version."""
-        cmd = bytes([0x81, 0x09, 0x00, 0x02, 0xFF])
-        self.send(cmd, pending="version")
+        self.send(CMD_GET_VERSION, pending=Command.VERSION)
 
     def get_mcu_type(self) -> None:
-        cmd = bytes([0x81, 0x09, 0x00, 0x03, 0xFF])
-        self.send(cmd, pending="mcu_type")
+        self.send(CMD_GET_MCU_TYPE, pending=Command.MCU_TYPE)
 
     def get_pan_type(self) -> None:
-        cmd = bytes([0x81, 0xD9, 0x06, 0x02, 0xFF])
-        self.send(cmd, pending="pan_type")
+        self.send(CMD_GET_PAN_TYPE, pending=Command.PAN_TYPE)
 
     def set_pan_method(self, idx: int) -> None:
         cmd = bytes([0x81, 0xD1, 0x06, 0x02, idx & 0x0F, 0xFF])
@@ -153,8 +201,7 @@ class PanTiltController(QtWidgets.QWidget):
         self.send(bytes(cmd))
 
     def stop(self) -> None:
-        cmd = bytes([0x81, 0x01, 0x06, 0x01, 0x00, 0x00, 0x03, 0x03, 0xFF])
-        self.send(cmd)
+        self.send(CMD_STOP)
 
     def stop_at(self, position: int) -> None:
         cmd = bytearray([
@@ -168,47 +215,47 @@ class PanTiltController(QtWidgets.QWidget):
         self.send(bytes(cmd))
 
     def stall_cali_on(self) -> None:
-        self.send(bytes([0x81, 0xD1, 0x06, 0x05, 0x02, 0xFF]))
+        self.send(CMD_STALL_CALI_ON)
 
     def stall_cali_off(self) -> None:
-        self.send(bytes([0x81, 0xD1, 0x06, 0x05, 0x03, 0xFF]))
+        self.send(CMD_STALL_CALI_OFF)
 
     def zero_cali_plus(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x05, 0x01, 0x00, 0xFF]))
+        self.send(CMD_ZERO_CALI_PLUS)
 
     def zero_cali_minus(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x05, 0x01, 0x02, 0xFF]))
+        self.send(CMD_ZERO_CALI_MINUS)
 
     def clear_zero_cali(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x05, 0x00, 0xFF]))
+        self.send(CMD_CLEAR_ZERO_CALI)
 
     def zero_cali_status(self) -> None:
-        self.send(bytes([0x81, 0xD9, 0x05, 0x55, 0xFF]), pending="zp_status")
+        self.send(CMD_ZERO_CALI_STATUS, pending=Command.ZP_STATUS)
 
     def lock_home(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x04, 0x01, 0xFF]))
+        self.send(CMD_LOCK_HOME)
 
     def unlock_home(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x04, 0x00, 0xFF]))
+        self.send(CMD_UNLOCK_HOME)
 
     def lock_status(self) -> None:
-        self.send(bytes([0x81, 0xD9, 0x05, 0x56, 0xFF]), pending="lock_status")
+        self.send(CMD_LOCK_STATUS, pending=Command.LOCK_STATUS)
 
     def go_home(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x04, 0xFF]))
+        self.send(CMD_GO_HOME)
 
     def set_speed_level(self, level: int) -> None:
         cmd = bytes([0x81, 0xD9, 0x06, 0x04, level & 0xFF, 0xFF])
-        self.send(cmd, pending="speed_pps")
+        self.send(cmd, pending=Command.SPEED_PPS)
 
     def get_speed_by_zoom(self) -> None:
-        self.send(bytes([0x81, 0x09, 0x06, 0xA2, 0xFF]), pending="speed_zoom")
+        self.send(CMD_GET_SPEED_BY_ZOOM, pending=Command.SPEED_ZOOM)
 
     def speed_by_zoom_on(self, ratio: int) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0xA2, 0x02, ratio & 0xFF, 0xFF]))
+        self.send(bytes([0x81, 0x01, 0x06, 0xA2, 0x02, ratio & 0x0F, 0xFF]))
 
     def speed_by_zoom_off(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0xA2, 0x03, 0xFF]))
+        self.send(CMD_SPEED_BY_ZOOM_OFF)
 
     def set_target_speed(self, value: int) -> None:
         cmd = bytearray([0x81, 0xD1, 0x06, 0x03, 0, 0, 0, 0, 0xFF])
@@ -219,7 +266,7 @@ class PanTiltController(QtWidgets.QWidget):
         self.send(bytes(cmd))
 
     def get_acceleration(self) -> None:
-        self.send(bytes([0x81, 0xD9, 0x06, 0x01, 0xFF]), pending="acc_value")
+        self.send(CMD_GET_ACCELERATION, pending=Command.ACC_VALUE)
 
     def set_acceleration(self, value: int) -> None:
         cmd = bytearray([0x81, 0xD1, 0x06, 0x01, 0, 0, 0, 0, 0xFF])
@@ -230,31 +277,31 @@ class PanTiltController(QtWidgets.QWidget):
         self.send(bytes(cmd))
 
     def get_acc_level(self) -> None:
-        self.send(bytes([0x81, 0x09, 0x06, 0x31, 0xFF]), pending="acc_level")
+        self.send(CMD_GET_ACC_LEVEL, pending=Command.ACC_LEVEL)
 
     def set_acc_level(self, idx: int) -> None:
         self.send(bytes([0x81, 0x01, 0x06, 0x31, (idx + 1) & 0x0F, 0xFF]))
 
     def get_position(self) -> None:
-        self.send(bytes([0x81, 0x09, 0x06, 0x12, 0xFF]), pending="position")
+        self.send(CMD_GET_POSITION, pending=Command.POSITION)
 
     def get_angle(self) -> None:
-        self.send(bytes([0x81, 0xD9, 0x05, 0x51, 0xFF]), pending="angle")
+        self.send(CMD_GET_ANGLE, pending=Command.ANGLE)
 
     def get_ab_count(self) -> None:
-        self.send(bytes([0x81, 0xD9, 0x05, 0x52, 0xFF]), pending="ab_count")
+        self.send(CMD_GET_AB_COUNT, pending=Command.AB_COUNT)
 
     def get_z_count(self) -> None:
-        self.send(bytes([0x81, 0xD9, 0x05, 0x53, 0xFF]), pending="z_count")
+        self.send(CMD_GET_Z_COUNT, pending=Command.Z_COUNT)
 
     def max_angle_on(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x66, 0x02, 0xFF]))
+        self.send(CMD_MAX_ANGLE_ON)
 
     def max_angle_off(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x06, 0x66, 0x03, 0xFF]))
+        self.send(CMD_MAX_ANGLE_OFF)
 
     def motor_type_0p9d(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x00, 0x03, 0x00, 0xFF]))
+        self.send(CMD_MOTOR_TYPE_0P9D)
 
     def motor_type_1p8d(self) -> None:
-        self.send(bytes([0x81, 0x01, 0x00, 0x03, 0x01, 0xFF]))
+        self.send(CMD_MOTOR_TYPE_1P8D)

@@ -1,8 +1,28 @@
+
 """Helpers for parsing responses from the MCU protocol."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Optional, Any, Callable
+from enum import Enum, auto
+
+
+class Command(Enum):
+    """Commands that can be sent to the controller."""
+    PAN_TYPE = auto()
+    VERSION = auto()
+    MCU_TYPE = auto()
+    SPEED_PPS = auto()
+    CURRENT_SPEED = auto()
+    ACC_LEVEL = auto()
+    SPEED_ZOOM = auto()
+    ACC_VALUE = auto()
+    POSITION = auto()
+    ANGLE = auto()
+    AB_COUNT = auto()
+    Z_COUNT = auto()
+    ZP_STATUS = auto()
+    LOCK_STATUS = auto()
 
 
 def _nibble_value(packet: bytes, start: int) -> int:
@@ -14,7 +34,7 @@ def _nibble_value(packet: bytes, start: int) -> int:
 @dataclass
 class ParseResult:
     """Result returned from :func:`ProtocolParser.parse`."""
-    type: str
+    type: Command
     value: Any
 
 
@@ -25,8 +45,25 @@ class ProtocolParser:
     with high level results.
     """
 
-    @staticmethod
-    def parse(packet: bytes, pending_cmd: Optional[str]) -> Optional[ParseResult]:
+    def __init__(self):
+        self._parsers: dict[Command, Callable[[bytes], Any]] = {
+            Command.PAN_TYPE: self._parse_pan_type,
+            Command.VERSION: self._parse_version,
+            Command.MCU_TYPE: self._parse_mcu_type,
+            Command.SPEED_PPS: self._parse_speed_pps,
+            Command.CURRENT_SPEED: self._parse_current_speed,
+            Command.ACC_LEVEL: self._parse_acc_level,
+            Command.SPEED_ZOOM: self._parse_speed_zoom,
+            Command.ACC_VALUE: self._parse_acc_value,
+            Command.POSITION: self._parse_position,
+            Command.ANGLE: self._parse_angle,
+            Command.AB_COUNT: self._parse_ab_count,
+            Command.Z_COUNT: self._parse_z_count,
+            Command.ZP_STATUS: self._parse_zp_status,
+            Command.LOCK_STATUS: self._parse_lock_status,
+        }
+
+    def parse(self, packet: bytes, pending_cmd: Optional[Command]) -> Optional[ParseResult]:
         """Parse *packet* assuming it is a reply for *pending_cmd*.
 
         Parameters
@@ -45,36 +82,84 @@ class ProtocolParser:
         if not packet or packet[-1] != 0xFF:
             return None
 
-        if pending_cmd == 'pan_type' and len(packet) >= 3:
-            return ParseResult('pan_type', packet[2] & 0x03)
-        if pending_cmd == 'version' and len(packet) >= 8:
+        if pending_cmd in self._parsers:
+            parser = self._parsers[pending_cmd]
+            value = parser(packet)
+            if value is not None:
+                return ParseResult(pending_cmd, value)
+
+        return None
+
+    def _parse_pan_type(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 3:
+            return packet[2] & 0x03
+        return None
+
+    def _parse_version(self, packet: bytes) -> Optional[str]:
+        if len(packet) >= 8:
             p5 = f"0{packet[5]}" if packet[5] < 10 else str(packet[5])
             p6 = f"0{packet[6]}" if packet[6] < 10 else str(packet[6])
             p7 = f"0{packet[7]}" if packet[7] < 10 else str(packet[7])
-            ver = f"{2000 + packet[4]}{p5}{p6}-{p7}"
-            return ParseResult('version', ver)
-        if pending_cmd == 'mcu_type' and len(packet) >= 3:
-            return ParseResult('mcu_type', packet[2] & 0x01)
-        if pending_cmd == 'speed_pps' and len(packet) >= 6:
-            return ParseResult('speed_pps', _nibble_value(packet, 2))
-        if pending_cmd == 'current_speed' and len(packet) >= 6:
-            return ParseResult('current_speed', _nibble_value(packet, 2))
-        if pending_cmd == 'acc_level' and len(packet) >= 3:
-            return ParseResult('acc_level', (packet[2] & 0x0F) - 1)
-        if pending_cmd == 'speed_zoom' and len(packet) >= 3:
-            return ParseResult('speed_zoom', packet[2])
-        if pending_cmd == 'acc_value' and len(packet) >= 6:
-            return ParseResult('acc_value', _nibble_value(packet, 2))
-        if pending_cmd == 'position' and len(packet) >= 6:
-            return ParseResult('position', _nibble_value(packet, 2))
-        if pending_cmd == 'angle' and len(packet) >= 6:
-            return ParseResult('angle', _nibble_value(packet, 2))
-        if pending_cmd == 'ab_count' and len(packet) >= 6:
-            return ParseResult('ab_count', _nibble_value(packet, 2))
-        if pending_cmd == 'z_count' and len(packet) >= 6:
-            return ParseResult('z_count', _nibble_value(packet, 2))
-        if pending_cmd == 'zp_status' and len(packet) >= 6:
-            return ParseResult('zp_status', packet[5] & 0x01)
-        if pending_cmd == 'lock_status' and len(packet) >= 6:
-            return ParseResult('lock_status', packet[5] & 0x01)
+            return f"{2000 + packet[4]}{p5}{p6}-{p7}"
         return None
+
+    def _parse_mcu_type(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 3:
+            return packet[2] & 0x01
+        return None
+
+    def _parse_speed_pps(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_current_speed(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_acc_level(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 3:
+            return (packet[2] & 0x0F) - 1
+        return None
+
+    def _parse_speed_zoom(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 3:
+            return packet[2]
+        return None
+
+    def _parse_acc_value(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_position(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_angle(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_ab_count(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_z_count(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return _nibble_value(packet, 2)
+        return None
+
+    def _parse_zp_status(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return packet[5] & 0x01
+        return None
+
+    def _parse_lock_status(self, packet: bytes) -> Optional[int]:
+        if len(packet) >= 6:
+            return packet[5] & 0x01
+        return None
+
